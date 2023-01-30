@@ -15,7 +15,9 @@ find_package(OpenCV REQUIRED)
 # 添加OpenCV头文件
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-# 添加以main.cpp文件为基础的可执行目标文件
+#添加 /include 文件夹下的头文件
+include_directories(${PROJECT_SOURCE_DIR}/include/)
+# 添加 /src 文件夹下的文件
 add_executable(rendering_demo src/main.cpp)
 
 # 为项目可行执行文件引入eigen依赖
