@@ -4,9 +4,13 @@
 
 #pragma once
 
-#include "Triangle.hpp"
 #include <algorithm>
-#include <eigen3/Eigen/Eigen>
+#include <vector>
+#include <map>
+
+#include "Eigen/Core"
+#include "Triangle.hpp"
+
 using namespace Eigen;
 
 namespace rst {

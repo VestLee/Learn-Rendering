@@ -1,9 +1,5 @@
-//
-// Created by goksu on 4/6/19.
-//
-
 #include <algorithm>
-#include "rasterizer.hpp"
+#include "../include/rasterizer.hpp"
 #include <opencv2/opencv.hpp>
 #include <math.h>
 #include <stdexcept>

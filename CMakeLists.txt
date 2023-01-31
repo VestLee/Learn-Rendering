@@ -8,6 +8,9 @@ project(rendering_demo)
 set(Eigen3_DIR "./ext/Eigen/install/share/eigen3/cmake")
 set(OpenCV_DIR "./ext/OpenCV/install")
 
+file(GLOB_RECURSE DIR_INCLUDES ./include/*.h ./include/*.hpp)
+source_group("Header Files" FILES ${DIR_INCLUDES})
+
 # 搜索查询Eigen3
 find_package(Eigen3 REQUIRED NO_MODULE)
 # OpenCV
@@ -16,10 +19,11 @@ find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 #添加 /include 文件夹下的头文件
-include_directories(${PROJECT_SOURCE_DIR}/include/)
+include_directories(${INCLUDE_DIR})
 # 添加 /src 文件夹下的文件
-add_executable(rendering_demo src/main.cpp)
+aux_source_directory(src DIR_SRCS)
+add_executable(rendering_demo ${DIR_SRCS} ${DIR_INCLUDES})
 
-# 为项目可行执行文件引入eigen依赖
+# 为项目可行执行文件引入库依赖
 target_link_libraries(rendering_demo Eigen3::Eigen)
 target_link_libraries(rendering_demo ${OpenCV_LIBS} )
