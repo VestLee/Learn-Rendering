@@ -6,7 +6,9 @@
 constexpr double MY_PI = 3.1415926;
 inline double Degree(double angle) { return angle * MY_PI / 180.0; }
 
-Eigen::Matrix4f get_model_matrix(float rotation_angle)
+// MVP 矩阵的学习可以参考： Games 101 Transformation 章节
+// Model Matrix 绕 Z 轴旋转
+Eigen::Matrix4f get_Z_rotation_matrix(float rotation_angle)
 {
     Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
 
@@ -22,6 +24,31 @@ Eigen::Matrix4f get_model_matrix(float rotation_angle)
     return model;
 }
 
+// Model Matrix 绕过原点的任意轴旋转
+// 参考
+// 矩阵推导 旋转公式 TODO
+Eigen::Matrix4f get_Rodrigues_rotation(Vector3f axis, float angle)
+{
+    Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
+    // TODO
+    return model;
+}
+// Rodrigues 旋转公式 TODO
+Eigen::Matrix4f get_Rodrigues_rotation(Vector3f axis, float angle)
+{
+    Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
+    // TODO
+    return model;
+}
+// 使用四元数 TODO
+Eigen::Matrix4f get_Quaternions_rotation(Vector3f point, Vector3f axis, float angle)
+{
+    Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
+    // TODO
+    return model;
+}
+
+// View Matrix
 Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
 {
     Eigen::Matrix4f view = Eigen::Matrix4f::Identity();
@@ -37,16 +64,11 @@ Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
     return view;
 }
 
+// Projection Matrix 
 Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio,
                                       float zNear, float zFar)
 {
-    // Students will implement this function
-
     Eigen::Matrix4f projection = Eigen::Matrix4f::Identity();
-
-    // TODO: Implement this function
-    // Create the projection matrix for the given parameters.
-    // Then return it.
 
     float n=zNear;
     float f=zFar;
@@ -78,10 +100,11 @@ int main(int argc, const char** argv)
             return 0;
     }
 
+    // 设置光栅化 FrameBuffer & Depth Buffer 大小
     rst::rasterizer r(700, 700);
-
+    // 设置观察点位置 
     Eigen::Vector3f eye_pos = {0, 0, 5};
-
+    // 设置顶点位置 & 顶点索引
     std::vector<Eigen::Vector3f> pos{{2, 0, -2}, {0, 2, -2}, {-2, 0, -2}};
     std::vector<Eigen::Vector3i> ind{{0, 1, 2}};
 
