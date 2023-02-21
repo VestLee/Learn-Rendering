@@ -21,6 +21,14 @@ rst::ind_buf_id rst::rasterizer::load_indices(const std::vector<Eigen::Vector3i>
     return {id};
 }
 
+rst::col_buf_id rst::rasterizer::load_colors(const std::vector<Eigen::Vector3f>& cols)
+{
+    auto id = get_next_id();
+    col_buf.emplace(id, cols);
+
+    return { id };
+}
+
 // Bresenham's line drawing algorithm
 // Code taken from a stack overflow answer: https://stackoverflow.com/a/16405254
 void rst::rasterizer::draw_line(Eigen::Vector3f begin, Eigen::Vector3f end)
@@ -128,37 +136,33 @@ auto to_vec4(const Eigen::Vector3f& v3, float w = 1.0f)
     return Vector4f(v3.x(), v3.y(), v3.z(), w);
 }
 
-void rst::rasterizer::draw(rst::pos_buf_id pos_buffer, rst::ind_buf_id ind_buffer, rst::Primitive type)
+void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf_id col_buffer, Primitive type)
 {
-    if (type != rst::Primitive::Triangle)
-    {
-        throw std::runtime_error("Drawing primitives other than triangle is not implemented yet!");
-    }
     auto& buf = pos_buf[pos_buffer.pos_id];
     auto& ind = ind_buf[ind_buffer.ind_id];
+    auto& col = col_buf[col_buffer.col_id];
 
-    float f1 = (100 - 0.1) / 2.0;
-    float f2 = (100 + 0.1) / 2.0;
+    float f1 = (50 - 0.1) / 2.0;
+    float f2 = (50 + 0.1) / 2.0;
 
     Eigen::Matrix4f mvp = projection * view * model;
     for (auto& i : ind)
     {
         Triangle t;
-
         Eigen::Vector4f v[] = {
                 mvp * to_vec4(buf[i[0]], 1.0f),
                 mvp * to_vec4(buf[i[1]], 1.0f),
                 mvp * to_vec4(buf[i[2]], 1.0f)
         };
-
+        //Homogeneous division
         for (auto& vec : v) {
             vec /= vec.w();
         }
-
-        for (auto & vert : v)
+        //Viewport transformation
+        for (auto& vert : v)
         {
-            vert.x() = 0.5*width*(vert.x()+1.0);
-            vert.y() = 0.5*height*(vert.y()+1.0);
+            vert.x() = 0.5 * width * (vert.x() + 1.0);
+            vert.y() = 0.5 * height * (vert.y() + 1.0);
             vert.z() = vert.z() * f1 + f2;
         }
 
@@ -169,11 +173,15 @@ void rst::rasterizer::draw(rst::pos_buf_id pos_buffer, rst::ind_buf_id ind_buffe
             t.setVertex(i, v[i].head<3>());
         }
 
-        t.setColor(0, 255.0,  0.0,  0.0);
-        t.setColor(1, 0.0  ,255.0,  0.0);
-        t.setColor(2, 0.0  ,  0.0,255.0);
+        auto col_x = col[i[0]];
+        auto col_y = col[i[1]];
+        auto col_z = col[i[2]];
 
-        rasterize_wireframe(t);
+        t.setColor(0, col_x[0], col_x[1], col_x[2]);
+        t.setColor(1, col_y[0], col_y[1], col_y[2]);
+        t.setColor(2, col_z[0], col_z[1], col_z[2]);
+
+        rasterize_triangle(t);
     }
 }
 
@@ -183,6 +191,85 @@ void rst::rasterizer::rasterize_wireframe(const Triangle& t)
     draw_line(t.c(), t.b());
     draw_line(t.b(), t.a());
 }
+
+
+//Screen space rasterization
+void rst::rasterizer::rasterize_triangle(const Triangle& t) {
+    auto v = t.toVector4();
+
+    // TODO : Find out the bounding box of current triangle.
+    // iterate through the pixel and find if the current pixel is inside the triangle
+    float x_min = std::min(std::min(v[0][0], v[1][0]), v[2][0]);
+    float x_max = std::max(std::max(v[0][0], v[1][0]), v[2][0]);
+    float y_min = std::min(std::min(v[0][1], v[1][1]), v[2][1]);
+    float y_max = std::max(std::max(v[0][1], v[1][1]), v[2][1]);
+
+    // anti-alising
+    bool MSAA4X = true;
+
+    // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
+    if (!MSAA4X)
+    {
+        // without anti-alising
+        for (int x = (int)x_min; x <= (int)x_max; x++)
+        {
+            for (int y = (int)y_min; y <= (int)y_max; y++)
+            {
+                // we need to decide whether this point is actually inside the triangle
+                if (!insideTriangle((float)x, (float)y, t.v))    continue;
+                // get z value--depth
+                // If so, use the following code to get the interpolated z value.
+                auto [alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
+                float w_reciprocal = 1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+                float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+                z_interpolated *= w_reciprocal;
+
+                // compare the current depth with the value in depth buffer
+                if (depth_buf[get_index(x, y)] > z_interpolated)// note: we use get_index to get the index of current point in depth buffer
+                {
+                    // we have to update this pixel
+                    depth_buf[get_index(x, y)] = z_interpolated; // update depth buffer
+                    // assign color to this pixel
+                    set_pixel(Vector3f(x, y, z_interpolated), t.getColor());
+                }
+            }
+        }
+    }
+    else
+    {
+        for (int x = (int)x_min; x <= (int)x_max; x++)
+        {
+            for (int y = (int)y_min; y <= (int)y_max; y++)
+            {
+                // you have to record the min-depth of the 4 sampled points(in one pixel)
+                float min_depth = FLT_MAX;
+                // the number of the 4 sampled points that are inside triangle
+                int count = 0;
+                std::vector<std::vector<float>> sampled_points{ {0.25,0.25},{0.25,0.75},{0.75,0.25},{0.75,0.75} };
+                for (int i = 0; i < 4; i++)
+                {
+                    if (insideTriangle(float(x) + sampled_points[i][0], float(y) + sampled_points[i][1], t.v))
+                    {
+                        auto [alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
+                        float w_reciprocal = 1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+                        float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+                        z_interpolated *= w_reciprocal;
+                        min_depth = std::min(min_depth, z_interpolated);
+                        count += 1;
+                    }
+                }
+                if (count > 0 && depth_buf[get_index(x, y)] > min_depth)
+                {
+                    // update
+                    depth_buf[get_index(x, y)] = min_depth;
+                    // note: the color should be changed too
+                    set_pixel(Vector3f(x, y, min_depth), t.getColor() * count / 4.0 + frame_buf[get_index(x, y)] * (4 - count) / 4.0); // frame_buf contains the current color
+                }
+            }
+        }
+    }
+}
+
 
 void rst::rasterizer::set_model(const Eigen::Matrix4f& m)
 {
