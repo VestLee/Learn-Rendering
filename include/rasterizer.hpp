@@ -80,6 +80,7 @@ class rasterizer
   private:
     void draw_line(Eigen::Vector3f begin, Eigen::Vector3f end);
     void rasterize_wireframe(const Triangle& t);
+    void rasterize_triangle(const Triangle& t);
 
   private:
     Eigen::Matrix4f model;
