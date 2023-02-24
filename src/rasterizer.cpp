@@ -9,7 +9,6 @@ rst::pos_buf_id rst::rasterizer::load_positions(const std::vector<Eigen::Vector3
 {
     auto id = get_next_id();
     pos_buf.emplace(id, positions);
-
     return {id};
 }
 
@@ -17,7 +16,6 @@ rst::ind_buf_id rst::rasterizer::load_indices(const std::vector<Eigen::Vector3i>
 {
     auto id = get_next_id();
     ind_buf.emplace(id, indices);
-
     return {id};
 }
 
@@ -25,7 +23,6 @@ rst::col_buf_id rst::rasterizer::load_colors(const std::vector<Eigen::Vector3f>&
 {
     auto id = get_next_id();
     col_buf.emplace(id, cols);
-
     return { id };
 }
 
@@ -166,6 +163,7 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
     auto& ind = ind_buf[ind_buffer.ind_id];
     auto& col = col_buf[col_buffer.col_id];
 
+    // TODO ： 这里是在调节什么？没有理解
     float f1 = (50 - 0.1) / 2.0;
     float f2 = (50 + 0.1) / 2.0;
 
@@ -178,11 +176,11 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
                 mvp * to_vec4(buf[i[1]], 1.0f),
                 mvp * to_vec4(buf[i[2]], 1.0f)
         };
-        //Homogeneous division
+        //Homogeneous division 归一化
         for (auto& vec : v) {
             vec /= vec.w();
         }
-        //Viewport transformation
+        //Viewport transformation 
         for (auto& vert : v)
         {
             vert.x() = 0.5 * width * (vert.x() + 1.0);
@@ -223,6 +221,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle& t) {
 
     // TODO : Find out the bounding box of current triangle.
     // iterate through the pixel and find if the current pixel is inside the triangle
+    // 规范一个矩形包围盒 ， 遍历举行包围盒中的像素
     float x_min = std::min(std::min(v[0][0], v[1][0]), v[2][0]);
     float x_max = std::max(std::max(v[0][0], v[1][0]), v[2][0]);
     float y_min = std::min(std::min(v[0][1], v[1][1]), v[2][1]);
@@ -240,7 +239,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle& t) {
             for (int y = (int)y_min; y <= (int)y_max; y++)
             {
                 // we need to decide whether this point is actually inside the triangle
-                if (!insideTriangle((float)x, (float)y, t.v))    continue;
+                if (!insideTriangle((float)x, (float)y, t.v)) continue;
                 // get z value--depth
                 // If so, use the following code to get the interpolated z value.
                 auto [alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
