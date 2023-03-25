@@ -2,6 +2,7 @@
 #include "../include/Triangle.hpp"
 #include <iostream>
 #include <opencv2/opencv.hpp>
+#include <thread>
 
 inline double Degree(double angle) { return angle * EIGEN_PI / 180.0; }
 
@@ -15,9 +16,9 @@ Eigen::Matrix4f get_Z_rotation_matrix(float rotation_angle)
     // Create the model matrix for rotating the triangle around the Z axis.
     // Then return it.
 
-    double degree = Degree(rotation_angle);
-    model << cos(degree), -sin(degree), 0, 0,
-        sin(degree), cos(degree), 0, 0,
+    auto degree = (float)Degree(rotation_angle);
+    model << cosf(degree), -sinf(degree), 0, 0,
+        sinf(degree), cosf(degree), 0, 0,
         0, 0, 1, 0,
         0, 0, 0, 1;
     return model;
@@ -79,45 +80,46 @@ Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
 
     Eigen::Matrix4f translate;
     translate << 1, 0, 0, -eye_pos[0],
-                 0, 1, 0, -eye_pos[1],
-                 0, 0, 1, -eye_pos[2],
-                 0, 0, 0, 1;
+        0, 1, 0, -eye_pos[1],
+        0, 0, 1, -eye_pos[2],
+        0, 0, 0, 1;
 
     view = translate * view;
 
     return view;
 }
 
-// Projection Matrix 
+// Projection Matrix
 Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio,
                                       float zNear, float zFar)
 {
     Eigen::Matrix4f projection = Eigen::Matrix4f::Identity();
 
-    float n=zNear;
-    float f=zFar;
-    float t=-abs(zNear)*tan(Degree(eye_fov)/2.0); // you do not need to add "-" here, it is just for visualizatin
-    float r=t*aspect_ratio;
+    float n = zNear;
+    float f = zFar;
+    float t = (float)(-abs(zNear) * tan(Degree(eye_fov) / 2.0)); // you do not need to add "-" here, it is just for visualizatin
+    float r = t * aspect_ratio;
 
-    projection << n/r, 0, 0, 0,
-                0, n/t, 0, 0,
-                0, 0, (n+f)/(n-f), -2*n*f/(n-f),
-                0, 0, 1, 0;
+    projection << n / r, 0, 0, 0,
+        0, n / t, 0, 0,
+        0, 0, (n + f) / (n - f), -2 * n * f / (n - f),
+        0, 0, 1, 0;
 
     return projection;
-
 }
 
-int main(int argc, const char** argv)
+int main(int argc, const char **argv)
 {
     float angle = 0;
     bool command_line = false;
     std::string filename = "output.png";
 
-    if (argc >= 3) {
+    if (argc >= 3)
+    {
         command_line = true;
         angle = std::stof(argv[2]); // -r by default
-        if (argc == 4) {
+        if (argc == 4)
+        {
             filename = std::string(argv[3]);
         }
         else
@@ -126,34 +128,28 @@ int main(int argc, const char** argv)
 
     // 设置光栅化 FrameBuffer & Depth Buffer 大小
     rst::rasterizer r(700, 700);
-    // 设置观察点位置 
+    // 设置观察点位置
     Eigen::Vector3f eye_pos = {0, 0, 5};
     // 设置顶点位置 & 顶点索引 & 顶点颜色
-    std::vector<Eigen::Vector3f> pos
-    {
-            {2, 0, -2},
-            {0, 2, -2},
-            {-2, 0, -2},
-            {3.5, -1, -5},
-            {2.5, 1.5, -5},
-            {-1, 0.5, -5}
-    };
+    std::vector<Eigen::Vector3f> pos{
+        {2, 0, -2},
+        {0, 2, -2},
+        {-2, 0, -2},
+        {3.5, -1, -5},
+        {2.5, 1.5, -5},
+        {-1, 0.5, -5}};
 
-    std::vector<Eigen::Vector3i> ind
-    {
-            {0, 1, 2},
-            {3, 4, 5}
-    };
+    std::vector<Eigen::Vector3i> ind{
+        {0, 1, 2},
+        {3, 4, 5}};
 
-    std::vector<Eigen::Vector3f> cols
-    {
-            {217.0, 238.0, 185.0},
-            {217.0, 238.0, 185.0},
-            {217.0, 238.0, 185.0},
-            {185.0, 217.0, 238.0},
-            {185.0, 217.0, 238.0},
-            {185.0, 217.0, 238.0}
-    };
+    std::vector<Eigen::Vector3f> cols{
+        {217.0, 238.0, 185.0},
+        {217.0, 238.0, 185.0},
+        {217.0, 238.0, 185.0},
+        {185.0, 217.0, 238.0},
+        {185.0, 217.0, 238.0},
+        {185.0, 217.0, 238.0}};
 
     auto pos_id = r.load_positions(pos);
     auto ind_id = r.load_indices(ind);
@@ -162,12 +158,13 @@ int main(int argc, const char** argv)
     int key = 0;
     int frame_count = 0;
 
-    if (command_line) {
+    if (command_line)
+    {
         r.clear(rst::Buffers::Color | rst::Buffers::Depth);
 
-        r.set_model(get_Rodrigues_rotation(Vector3f(0,0,1), angle));
+        r.set_model(get_Rodrigues_rotation(Vector3f(0, 0, 1), angle));
         r.set_view(get_view_matrix(eye_pos));
-        r.set_projection(get_projection_matrix(45, 1, 0.1, 50));
+        r.set_projection(get_projection_matrix(45, 1, 0.1f, 50));
 
         r.draw(pos_id, ind_id, col_id, rst::Primitive::Triangle);
         cv::Mat image(700, 700, CV_32FC3, r.frame_buffer().data());
@@ -178,27 +175,30 @@ int main(int argc, const char** argv)
         return 0;
     }
 
-    while (key != 27) {
+    while (key != 27)
+    {
         r.clear(rst::Buffers::Color | rst::Buffers::Depth);
 
         r.set_model(get_Rodrigues_rotation(Vector3f(0, 0, 2), angle));
         r.set_view(get_view_matrix(eye_pos));
-        r.set_projection(get_projection_matrix(45, 1, 0.1, 50));
+        r.set_projection(get_projection_matrix(45, 1, 0.1f, 50));
 
         r.draw(pos_id, ind_id, col_id, rst::Primitive::Triangle);
 
         cv::Mat image(700, 700, CV_32FC3, r.frame_buffer().data());
         image.convertTo(image, CV_8UC3, 1.0f);
         cv::imshow("image", image);
-        cv::imwrite("resutl.png",image);
+        // cv::imwrite("resutl.png",image);
         key = cv::waitKey(10);
 
-        // std::cout << "frame count: " << frame_count++ << '\n';
+        std::cout << "frame count: " << frame_count++ << '\n';
 
-        if (key == 'a') {
+        if (key == 'a')
+        {
             angle += 10;
         }
-        else if (key == 'd') {
+        else if (key == 'd')
+        {
             angle -= 10;
         }
     }
