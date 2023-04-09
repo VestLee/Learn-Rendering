@@ -25,25 +25,33 @@ rst::col_buf_id rst::rasterizer::load_colors(const std::vector<Eigen::Vector3f> 
     return {id};
 }
 
-static float insideTriangle(float x, float y, const Vector3f *_v)
-{
-    // 使用重心坐标同侧法 叉乘之后同号
-    // TODO : Implement this function to check if the point (x, y) is inside the triangle represented by _v[0], _v[1], _v[2]
-    std::vector<Vector3f> ver, ver2;
-    ver.push_back({_v[1].x() - _v[0].x(), _v[1].y() - _v[0].y(), 0});
-    ver2.push_back({x - _v[0].x(), y - _v[0].y(), 0});
-    ver.push_back({_v[2].x() - _v[1].x(), _v[2].y() - _v[1].y(), 0});
-    ver2.push_back({x - _v[1].x(), y - _v[1].y(), 0});
-    ver.push_back({_v[0].x() - _v[2].x(), _v[0].y() - _v[2].y(), 0});
-    ver2.push_back({x - _v[2].x(), y - _v[2].y(), 0});
-
-    for (int i = 0; i < 3; i++)
-    {
-        if (ver[i].cross(ver2[i]).z() < 0)
-            return false;
-    }
-    return true;
-}
+// static float insideTriangle(float x, float y, const Vector3f *_v)
+//{
+//     // 使用重心坐标同侧法 叉乘之后同号
+//     // TODO : Implement this function to check if the point (x, y) is inside the triangle represented by _v[0], _v[1], _v[2]
+//     // 重心坐标同侧法
+//     // 三角形的三个边
+//     Vector3f e0 = _v[1] - _v[0];
+//     Vector3f e1 = _v[2] - _v[1];
+//     Vector3f e2 = _v[0] - _v[2];
+//     // 三角形的三个顶点到点(x,y)的向量
+//     Vector3f v0p = Vector3f(x, y, 0) - _v[0];
+//     Vector3f v1p = Vector3f(x, y, 0) - _v[1];
+//     Vector3f v2p = Vector3f(x, y, 0) - _v[2];
+//     // 三角形的三个边与三个顶点到点(x,y)的向量的叉乘
+//     Vector3f c0 = e0.cross(v0p);
+//     Vector3f c1 = e1.cross(v1p);
+//     Vector3f c2 = e2.cross(v2p);
+//     // 如果三个叉乘的结果都是正数或者都是负数，说明点(x,y)在三角形内部
+//     if ((c0.z() > 0 && c1.z() > 0 && c2.z() > 0) || (c0.z() < 0 && c1.z() < 0 && c2.z() < 0))
+//     {
+//         return true;
+//     }
+//     else
+//     {
+//         return false;
+//     }
+// }
 
 // Bresenham's line drawing algorithm
 // Code taken from a stack overflow answer: https://stackoverflow.com/a/16405254
@@ -215,18 +223,18 @@ auto computeBarycentric2D(float x, float y, const Eigen::Vector3f *pts)
 {
     Eigen::Vector3f v0 = pts[2] - pts[0];
     Eigen::Vector3f v1 = pts[1] - pts[0];
-    Eigen::Vector3f v2 = Eigen::Vector3f(x, y, 1.0f) - pts[0];
+    Eigen::Vector3f v2 = Eigen::Vector3f(x, y, 1.f) - pts[0];
 
     float d00 = v0.dot(v0);
     float d01 = v0.dot(v1);
     float d11 = v1.dot(v1);
     float d20 = v2.dot(v0);
     float d21 = v2.dot(v1);
-    float denom = d00 * d11 - d01 * d01;
+    float denom_inv = 1.f / (d00 * d11 - d01 * d01);
 
-    float v = (d11 * d20 - d01 * d21) / denom;
-    float w = (d00 * d21 - d01 * d20) / denom;
-    float u = 1.0f - v - w;
+    float v = (d11 * d20 - d01 * d21) * denom_inv;
+    float w = (d00 * d21 - d01 * d20) * denom_inv;
+    float u = 1.f - v - w;
 
     return std::make_tuple(u, v, w);
 }
@@ -244,23 +252,23 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
     float y_min = std::min(std::min(v[0][1], v[1][1]), v[2][1]);
     float y_max = std::max(std::max(v[0][1], v[1][1]), v[2][1]);
 
-    // anti-alising
+    // anti-aliasing
     bool MSAA4X = false;
 
     // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
     if (!MSAA4X)
     {
-        // without anti-alising
-        for (int x = (int)x_min; x <= (int)x_max; x++)
+        // without anti-aliasing
+        for (int x = (int)x_min; x <= (int)x_max; ++x)
         {
-            for (int y = (int)y_min; y <= (int)y_max; y++)
+            for (int y = (int)y_min; y <= (int)y_max; ++y)
             {
+                auto [alpha, beta, gamma] = computeBarycentric2D((float)x + 0.5f, (float)y + 0.5f, t.v);
                 // we need to decide whether this point is actually inside the triangle
-                if (!insideTriangle((float)x, (float)y, t.v))
+                if (alpha < 0.f || beta < 0.f || gamma < 0.f)
                     continue;
                 // get z value--depth
                 // If so, use the following code to get the interpolated z value.
-                auto [alpha, beta, gamma] = computeBarycentric2D((float)x, (float)y, t.v);
                 float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
                 float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
                 z_interpolated *= w_reciprocal;
@@ -289,15 +297,14 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
                 std::vector<std::vector<float>> sampled_points{{0.25, 0.25}, {0.25, 0.75}, {0.75, 0.25}, {0.75, 0.75}};
                 for (int i = 0; i < 4; i++)
                 {
-                    if (insideTriangle(float(x) + sampled_points[i][0], float(y) + sampled_points[i][1], t.v))
-                    {
-                        auto [alpha, beta, gamma] = computeBarycentric2D((float)x, (float)y, t.v);
-                        float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
-                        float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-                        z_interpolated *= w_reciprocal;
-                        min_depth = std::min(min_depth, z_interpolated);
-                        count += 1;
-                    }
+                    auto [alpha, beta, gamma] = computeBarycentric2D(float(x) + sampled_points[i][0], float(y) + sampled_points[i][1], t.v);
+                    if (alpha < 0.f || beta < 0.f || gamma < 0.f)
+                        continue;
+                    float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
+                    float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+                    z_interpolated *= w_reciprocal;
+                    min_depth = std::min(min_depth, z_interpolated);
+                    count += 1;
                 }
                 if (count > 0 && depth_buf[get_index(x, y)] > min_depth)
                 {

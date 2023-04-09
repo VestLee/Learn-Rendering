@@ -2,7 +2,7 @@
 #include "../include/Triangle.hpp"
 #include <iostream>
 #include <opencv2/opencv.hpp>
-#include <thread>
+#include <chrono>
 
 inline double Degree(double angle) { return angle * EIGEN_PI / 180.0; }
 
@@ -177,6 +177,8 @@ int main(int argc, const char **argv)
 
     while (key != 27)
     {
+        auto time_start = std::chrono::steady_clock::now();
+
         r.clear(rst::Buffers::Color | rst::Buffers::Depth);
 
         r.set_model(get_Rodrigues_rotation(Vector3f(0, 0, 2), angle));
@@ -191,8 +193,6 @@ int main(int argc, const char **argv)
         // cv::imwrite("resutl.png",image);
         key = cv::waitKey(10);
 
-        std::cout << "frame count: " << frame_count++ << '\n';
-
         if (key == 'a')
         {
             angle += 10;
@@ -201,6 +201,10 @@ int main(int argc, const char **argv)
         {
             angle -= 10;
         }
+
+        auto time_end = std::chrono::steady_clock::now();
+        auto time_used = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start);
+        std::cout << "frame count: " << ++frame_count << ", frametime: " << time_used.count() << " ms" << "\n";
     }
 
     return 0;

@@ -38,3 +38,4 @@
 *.pdb
 .vscode
 .vs
+out
