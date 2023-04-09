@@ -30,7 +30,16 @@ Eigen::Matrix4f get_Z_rotation_matrix(float rotation_angle)
 Eigen::Matrix4f get_Matrix_rotation(Vector3f axis, float rotation_angle)
 {
     Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
-    // TODO
+
+    auto degree = (float)Degree(rotation_angle);
+    axis.normalize();
+    auto x = axis.x();
+    auto y = axis.y();
+    auto z = axis.z();
+    model << x * x * (1 - cos(degree)) + cos(degree), x * y * (1 - cos(degree)) - z * sin(degree), x * z * (1 - cos(degree)) + y * sin(degree), 0,
+        x * y * (1 - cos(degree)) + z * sin(degree), y * y * (1 - cos(degree)) + cos(degree), y * z * (1 - cos(degree)) - x * sin(degree), 0,
+        x * z * (1 - cos(degree)) - y * sin(degree), y * z * (1 - cos(degree)) + x * sin(degree), z * z * (1 - cos(degree)) + cos(degree), 0,
+        0, 0, 0, 1;
     return model;
 }
 
@@ -62,6 +71,7 @@ Eigen::Matrix4f get_Rodrigues_rotation(Vector3f axis, float rotation_angle)
         0, 0, 0, 1;
 
     model = cos(degree) * I + (1 - cos(degree)) * axi * taxi + sin(degree) * N;
+    model(3, 3) = 1; // 前面计算可以用3x3的矩阵
     return model;
 }
 

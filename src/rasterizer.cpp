@@ -247,10 +247,10 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
     // TODO : Find out the bounding box of current triangle.
     // iterate through the pixel and find if the current pixel is inside the triangle
     // 规范一个矩形包围盒 ， 遍历举行包围盒中的像素
-    float x_min = std::min(std::min(v[0][0], v[1][0]), v[2][0]);
-    float x_max = std::max(std::max(v[0][0], v[1][0]), v[2][0]);
-    float y_min = std::min(std::min(v[0][1], v[1][1]), v[2][1]);
-    float y_max = std::max(std::max(v[0][1], v[1][1]), v[2][1]);
+    float x_min = std::clamp(std::min(std::min(v[0][0], v[1][0]), v[2][0]), 0.f, (float)width - 1.f);
+    float x_max = std::clamp(std::max(std::max(v[0][0], v[1][0]), v[2][0]), 0.f, (float)width - 1.f);
+    float y_min = std::clamp(std::min(std::min(v[0][1], v[1][1]), v[2][1]), 0.f, (float)height - 1.f);
+    float y_max = std::clamp(std::max(std::max(v[0][1], v[1][1]), v[2][1]), 0.f, (float)height - 1.f);
 
     // anti-aliasing
     bool MSAA4X = false;
@@ -353,7 +353,7 @@ rst::rasterizer::rasterizer(int w, int h) : width(w), height(h)
 
 int rst::rasterizer::get_index(int x, int y)
 {
-    return (height - y) * width + x;
+    return (height - y - 1) * width + x;
 }
 
 void rst::rasterizer::set_pixel(const Eigen::Vector3f &point, const Eigen::Vector3f &color)
@@ -362,6 +362,6 @@ void rst::rasterizer::set_pixel(const Eigen::Vector3f &point, const Eigen::Vecto
     if (point.x() < 0 || point.x() >= width ||
         point.y() < 0 || point.y() >= height)
         return;
-    auto ind = (size_t)((height - point.y()) * width + point.x());
+    auto ind = (size_t)((height - point.y() - 1) * width + point.x());
     frame_buf[ind] = color;
 }
