@@ -253,7 +253,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
     float y_max = std::clamp(std::max(std::max(v[0][1], v[1][1]), v[2][1]), 0.f, (float)height - 1.f);
 
     // anti-aliasing
-    bool MSAA4X = false;
+    bool MSAA4X = true;
 
     // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
     if (!MSAA4X)
