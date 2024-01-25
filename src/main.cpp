@@ -7,7 +7,7 @@
 
 using namespace LRR;
 
-int main(int argc, const char** argv)
+int main(int argc, const char **argv)
 {
     float angle = 0;
     bool command_line = false;
@@ -28,7 +28,7 @@ int main(int argc, const char** argv)
     // 设置光栅化 FrameBuffer & Depth Buffer 大小
     rst::rasterizer r(700, 700);
     // 设置观察点位置
-    Eigen::Vector3f eye_pos = { 0, 0, 5 };
+    Eigen::Vector3f eye_pos = {0, 0, 5};
     // 设置顶点位置 & 顶点索引 & 顶点颜色
     std::vector<Eigen::Vector3f> pos{
         {2, 0, -2},
@@ -36,11 +36,11 @@ int main(int argc, const char** argv)
         {-2, 0, -2},
         {3.5, -1, -5},
         {2.5, 1.5, -5},
-        {-1, 0.5, -5} };
+        {-1, 0.5, -5}};
 
     std::vector<Eigen::Vector3i> ind{
         {0, 1, 2},
-        {3, 4, 5} };
+        {3, 4, 5}};
 
     std::vector<Eigen::Vector3f> cols{
         {217.0, 238.0, 185.0},
@@ -48,7 +48,7 @@ int main(int argc, const char** argv)
         {217.0, 238.0, 185.0},
         {185.0, 217.0, 238.0},
         {185.0, 217.0, 238.0},
-        {185.0, 217.0, 238.0} };
+        {185.0, 217.0, 238.0}};
 
     auto pos_id = r.load_positions(pos);
     auto ind_id = r.load_indices(ind);
@@ -74,10 +74,10 @@ int main(int argc, const char** argv)
         return 0;
     }
 
+    auto time_start = std::chrono::steady_clock::now();
+
     while (key != 27)
     {
-        auto time_start = std::chrono::steady_clock::now();
-
         r.clear(rst::Buffers::Color | rst::Buffers::Depth);
 
         r.set_model(LRR::Transform::get_Rodrigues_rotation(Vector3f(0, 0, 2), angle));
@@ -101,9 +101,16 @@ int main(int argc, const char** argv)
             angle -= 10;
         }
 
+        ++frame_count;
+
         auto time_end = std::chrono::steady_clock::now();
         auto time_used = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start);
-        std::cout << "frame count: " << ++frame_count << ", frametime: " << time_used.count() << " ms" << "\n";
+        if (time_used.count() > 1000)
+        {
+            time_start = time_end - std::chrono::milliseconds(time_used.count() % 1000);
+            std::cout << "fps: " << frame_count << "\n";
+            frame_count = 0;
+        }
     }
 
     return 0;
