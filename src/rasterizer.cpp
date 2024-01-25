@@ -167,6 +167,7 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
     auto &col = col_buf[col_buffer.col_id];
 
     // TODO ： 这里是在调节什么？没有理解
+    // far = 50, near = 0.1
     float f1 = (float)((50 - 0.1) / 2.0);
     float f2 = (float)((50 + 0.1) / 2.0);
 
@@ -219,7 +220,7 @@ void rst::rasterizer::rasterize_wireframe(const Triangle &t)
 
 // auto [alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
 // define a function to compute the barycentric coordinates of a point p(x,y) in a triangle (x1,y1),(x2,y2),(x3,y3)
-auto computeBarycentric2D(float x, float y, const Eigen::Vector3f *pts)
+inline static auto computeBarycentric2D(float x, float y, const Eigen::Vector3f *pts)
 {
     Eigen::Vector3f v0 = pts[2] - pts[0];
     Eigen::Vector3f v1 = pts[1] - pts[0];
@@ -236,7 +237,26 @@ auto computeBarycentric2D(float x, float y, const Eigen::Vector3f *pts)
     float w = (d00 * d21 - d01 * d20) * denom_inv;
     float u = 1.f - v - w;
 
-    return std::make_tuple(u, v, w);
+    return std::array<float, 3>{u, v, w};
+}
+
+// gain performance a lot on debug build, but little on release build
+// TODO:不太理解为什么可以这样简化？
+inline static auto computeBarycentric2D_2(float x, float y, const Eigen::Vector3f *pts)
+{
+    float ax = pts[2].x() - pts[0].x();
+    float ay = pts[2].y() - pts[0].y();
+    float bx = pts[1].x() - pts[0].x();
+    float by = pts[1].y() - pts[0].y();
+    float cx = pts[0].x() - x;
+    float cy = pts[0].y() - y;
+
+    float d = ax * by - bx * ay;
+    float wa = (bx * cy - cx * by) / d;
+    float wb = (cx * ay - ax * cy) / d;
+    float wc = 1.0f - wa - wb;
+
+    return std::array<float, 3>{wa, wb, wc};
 }
 
 // Screen space rasterization
@@ -253,25 +273,29 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
     float y_max = std::clamp(std::max(std::max(v[0][1], v[1][1]), v[2][1]), 0.f, (float)height - 1.f);
 
     // anti-aliasing
-    bool MSAA4X = true;
+    constexpr bool MSAA4X = true;
 
     // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
-    if (!MSAA4X)
+    if constexpr (!MSAA4X)
     {
         // without anti-aliasing
         for (int x = (int)x_min; x <= (int)x_max; ++x)
         {
             for (int y = (int)y_min; y <= (int)y_max; ++y)
             {
-                auto [alpha, beta, gamma] = computeBarycentric2D((float)x + 0.5f, (float)y + 0.5f, t.v);
+                auto [alpha, beta, gamma] = computeBarycentric2D_2((float)x + 0.5f, (float)y + 0.5f, t.v);
                 // we need to decide whether this point is actually inside the triangle
                 if (alpha < 0.f || beta < 0.f || gamma < 0.f)
                     continue;
                 // get z value--depth
                 // If so, use the following code to get the interpolated z value.
-                float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
-                float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-                z_interpolated *= w_reciprocal;
+                // float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
+                // float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+                // z_interpolated *= w_reciprocal;
+                float f1 = alpha * v[1].w() * v[2].w();
+                float f2 = beta * v[0].w() * v[2].w();
+                float f3 = gamma * v[0].w() * v[1].w();
+                float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
 
                 // compare the current depth with the value in depth buffer
                 if (depth_buf[get_index(x, y)] > z_interpolated) // note: we use get_index to get the index of current point in depth buffer
@@ -294,15 +318,19 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
                 float min_depth = FLT_MAX;
                 // the number of the 4 sampled points that are inside triangle
                 int count = 0;
-                std::vector<std::vector<float>> sampled_points{{0.25, 0.25}, {0.25, 0.75}, {0.75, 0.25}, {0.75, 0.75}};
+                static const std::vector<std::vector<float>> sampled_points = {{0.25f, 0.25f}, {0.75f, 0.25f}, {0.25f, 0.75f}, {0.75f, 0.75f}};
                 for (int i = 0; i < 4; i++)
                 {
-                    auto [alpha, beta, gamma] = computeBarycentric2D(float(x) + sampled_points[i][0], float(y) + sampled_points[i][1], t.v);
+                    auto [alpha, beta, gamma] = computeBarycentric2D_2(float(x) + sampled_points[i][0], float(y) + sampled_points[i][1], t.v);
                     if (alpha < 0.f || beta < 0.f || gamma < 0.f)
                         continue;
-                    float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
-                    float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-                    z_interpolated *= w_reciprocal;
+                    // float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
+                    // float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+                    // z_interpolated *= w_reciprocal;
+                    float f1 = alpha * v[1].w() * v[2].w();
+                    float f2 = beta * v[0].w() * v[2].w();
+                    float f3 = gamma * v[0].w() * v[1].w();
+                    float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
                     min_depth = std::min(min_depth, z_interpolated);
                     count += 1;
                 }
@@ -351,12 +379,12 @@ rst::rasterizer::rasterizer(int w, int h) : width(w), height(h)
     depth_buf.resize(w * h);
 }
 
-int rst::rasterizer::get_index(int x, int y)
+inline int rst::rasterizer::get_index(int x, int y)
 {
     return (height - y - 1) * width + x;
 }
 
-void rst::rasterizer::set_pixel(const Eigen::Vector3f &point, const Eigen::Vector3f &color)
+inline void rst::rasterizer::set_pixel(const Eigen::Vector3f &point, const Eigen::Vector3f &color)
 {
     // old index: auto ind = point.y() + point.x() * width;
     if (point.x() < 0 || point.x() >= width ||

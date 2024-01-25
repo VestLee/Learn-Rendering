@@ -90,7 +90,7 @@ int main(int argc, const char** argv)
         image.convertTo(image, CV_8UC3, 1.0f);
         cv::imshow("image", image);
         // cv::imwrite("resutl.png",image);
-        key = cv::waitKey(10);
+        key = cv::pollKey();
 
         if (key == 'a')
         {
