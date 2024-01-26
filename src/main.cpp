@@ -75,9 +75,12 @@ int main(int argc, const char **argv)
     }
 
     auto time_start = std::chrono::steady_clock::now();
+    long long counter_nsec = 0;
 
     while (key != 27)
     {
+        auto frame_start = std::chrono::steady_clock::now();
+
         r.clear(rst::Buffers::Color | rst::Buffers::Depth);
 
         r.set_model(LRR::Transform::get_Rodrigues_rotation(Vector3f(0, 0, 2), angle));
@@ -103,12 +106,18 @@ int main(int argc, const char **argv)
 
         ++frame_count;
 
-        auto time_end = std::chrono::steady_clock::now();
-        auto time_used = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start);
-        if (time_used.count() > 1000)
+        auto now = std::chrono::steady_clock::now();
+        auto frame_time = std::chrono::duration(now - frame_start);
+        auto time_elapsed = std::chrono::duration(now - time_start);
+        counter_nsec += frame_time.count();
+        if (counter_nsec >= 1000 * 1000 * 1000)
         {
-            time_start = time_end - std::chrono::milliseconds(time_used.count() % 1000);
-            std::cout << "fps: " << frame_count << "\n";
+            // NOTE: set to 0 will move the timeline forward according to the remainder of the last frame
+            // counter_nsec = 0;
+            // NOTE: set to the remainder of global time can mostly fix the timeline on precise seconds
+            // however if frame time takes more than 1 second, the timeline will still move forward
+            counter_nsec = time_elapsed.count() % (1000 * 1000 * 1000);
+            std::cout << "time: " << time_elapsed.count() * 0.001 * 0.001 * 0.001 << "s, fps: " << frame_count << std::endl;
             frame_count = 0;
         }
     }
