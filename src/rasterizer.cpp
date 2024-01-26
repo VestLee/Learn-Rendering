@@ -1,8 +1,11 @@
-#include <algorithm>
 #include "../include/rasterizer.hpp"
+
+#include <algorithm>
 #include <opencv2/opencv.hpp>
 #include <math.h>
 #include <stdexcept>
+
+#include "utils/ScheduledWorker.h"
 
 rst::pos_buf_id rst::rasterizer::load_positions(const std::vector<Eigen::Vector3f> &positions)
 {
@@ -275,73 +278,110 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
     // anti-aliasing
     constexpr bool MSAA4X = true;
 
+    // multithreading
+    // 当fps超过一定值时，多线程反而会降低性能，因为每帧的时间都很短，线程同步带来的开销相对会变大
+    constexpr unsigned int parts = 4;
+    // 这里使用线程池，相对于裸std::thread会节省创建线程的开销
+    // 这个类是之前用来执行定时任务的忙等线程，只是也具备一次执行的功能，所以可以当作池来用
+    static std::vector<LRR::utils::ScheduledWorker> workers(parts); 
+    static std::vector<std::pair<float, float>> y_segs(parts);
+    auto y_step = (y_max - y_min) / parts;
+    for (int i = 0; i < parts; i++)
+    {
+        y_segs[i].first = y_min + y_step * i;
+        y_segs[i].second = y_min + y_step * (i + 1);
+    }
+
     // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
     if constexpr (!MSAA4X)
     {
         // without anti-aliasing
-        for (int x = (int)x_min; x <= (int)x_max; ++x)
+        for (int i = 0; i < parts; i++)
         {
-            for (int y = (int)y_min; y <= (int)y_max; ++y)
-            {
-                auto [alpha, beta, gamma] = computeBarycentric2D_2((float)x + 0.5f, (float)y + 0.5f, t.v);
-                // we need to decide whether this point is actually inside the triangle
-                if (alpha < 0.f || beta < 0.f || gamma < 0.f)
-                    continue;
-                // get z value--depth
-                // If so, use the following code to get the interpolated z value.
-                // float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
-                // float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-                // z_interpolated *= w_reciprocal;
-                float f1 = alpha * v[1].w() * v[2].w();
-                float f2 = beta * v[0].w() * v[2].w();
-                float f3 = gamma * v[0].w() * v[1].w();
-                float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
-
-                // compare the current depth with the value in depth buffer
-                if (depth_buf[get_index(x, y)] > z_interpolated) // note: we use get_index to get the index of current point in depth buffer
+            workers[i].Dispatch(
+                [&, i]()
                 {
-                    // we have to update this pixel
-                    depth_buf[get_index(x, y)] = z_interpolated; // update depth buffer
-                    // assign color to this pixel
-                    set_pixel(Vector3f((float)x, (float)y, z_interpolated), t.getColor());
-                }
-            }
+                    for (int x = (int)x_min; x <= (int)x_max; ++x)
+                    {
+                        for (int y = (int)y_segs[i].first; y < (int)y_segs[i].second; ++y)
+                        {
+                            auto [alpha, beta, gamma] = computeBarycentric2D_2((float)x + 0.5f, (float)y + 0.5f, t.v);
+                            // we need to decide whether this point is actually inside the triangle
+                            if (alpha < 0.f || beta < 0.f || gamma < 0.f)
+                                continue;
+                            // get z value--depth
+                            // If so, use the following code to get the interpolated z value.
+                            // float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
+                            // float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+                            // z_interpolated *= w_reciprocal;
+                            float f1 = alpha * v[1].w() * v[2].w();
+                            float f2 = beta * v[0].w() * v[2].w();
+                            float f3 = gamma * v[0].w() * v[1].w();
+                            float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
+
+                            // compare the current depth with the value in depth buffer
+                            if (depth_buf[get_index(x, y)] > z_interpolated) // note: we use get_index to get the index of current point in depth buffer
+                            {
+                                // we have to update this pixel
+                                depth_buf[get_index(x, y)] = z_interpolated; // update depth buffer
+                                // assign color to this pixel
+                                set_pixel(Vector3f((float)x, (float)y, z_interpolated), t.getColor());
+                            }
+                        }
+                    }
+                },
+                0);
         }
     }
     else
     {
-        for (int x = (int)x_min; x <= (int)x_max; x++)
+        for (int i = 0; i < parts; i++)
         {
-            for (int y = (int)y_min; y <= (int)y_max; y++)
-            {
-                // you have to record the min-depth of the 4 sampled points(in one pixel)
-                float min_depth = FLT_MAX;
-                // the number of the 4 sampled points that are inside triangle
-                int count = 0;
-                static const std::vector<std::vector<float>> sampled_points = {{0.25f, 0.25f}, {0.75f, 0.25f}, {0.25f, 0.75f}, {0.75f, 0.75f}};
-                for (int i = 0; i < 4; i++)
+            workers[i].Dispatch(
+                [&, i]()
                 {
-                    auto [alpha, beta, gamma] = computeBarycentric2D_2(float(x) + sampled_points[i][0], float(y) + sampled_points[i][1], t.v);
-                    if (alpha < 0.f || beta < 0.f || gamma < 0.f)
-                        continue;
-                    // float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
-                    // float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-                    // z_interpolated *= w_reciprocal;
-                    float f1 = alpha * v[1].w() * v[2].w();
-                    float f2 = beta * v[0].w() * v[2].w();
-                    float f3 = gamma * v[0].w() * v[1].w();
-                    float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
-                    min_depth = std::min(min_depth, z_interpolated);
-                    count += 1;
-                }
-                if (count > 0 && depth_buf[get_index(x, y)] > min_depth)
-                {
-                    // update
-                    depth_buf[get_index(x, y)] = min_depth;
-                    // note: the color should be changed too
-                    set_pixel(Vector3f((float)x, (float)y, min_depth), t.getColor() * count / 4.0 + frame_buf[get_index(x, y)] * (4 - count) / 4.0); // frame_buf contains the current color
-                }
-            }
+                    for (int x = (int)x_min; x <= (int)x_max; x++)
+                    {
+                        for (int y = (int)y_segs[i].first; y < (int)y_segs[i].second; y++)
+                        {
+                            // you have to record the min-depth of the 4 sampled points(in one pixel)
+                            float min_depth = FLT_MAX;
+                            // the number of the 4 sampled points that are inside triangle
+                            int count = 0;
+                            static const std::vector<std::vector<float>> sampled_points = {{0.25f, 0.25f}, {0.75f, 0.25f}, {0.25f, 0.75f}, {0.75f, 0.75f}};
+                            for (int i = 0; i < 4; i++)
+                            {
+                                auto [alpha, beta, gamma] = computeBarycentric2D_2(float(x) + sampled_points[i][0], float(y) + sampled_points[i][1], t.v);
+                                if (alpha < 0.f || beta < 0.f || gamma < 0.f)
+                                    continue;
+                                // float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
+                                // float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+                                // z_interpolated *= w_reciprocal;
+                                float f1 = alpha * v[1].w() * v[2].w();
+                                float f2 = beta * v[0].w() * v[2].w();
+                                float f3 = gamma * v[0].w() * v[1].w();
+                                float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
+                                min_depth = std::min(min_depth, z_interpolated);
+                                count += 1;
+                            }
+                            if (count > 0 && depth_buf[get_index(x, y)] > min_depth)
+                            {
+                                // update
+                                depth_buf[get_index(x, y)] = min_depth;
+                                // note: the color should be changed too
+                                set_pixel(Vector3f((float)x, (float)y, min_depth), t.getColor() * count / 4.0 + frame_buf[get_index(x, y)] * (4 - count) / 4.0); // frame_buf contains the current color
+                            }
+                        }
+                    }
+                },
+                0);
+        }
+    }
+
+    for (int i = 0; i < parts; i++)
+    {
+        while (workers[i].Busy())
+        {
         }
     }
 }

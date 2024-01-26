@@ -28,6 +28,7 @@ find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 # 添加 /include 文件夹下的头文件
+set (INCLUDE_DIR ./include)
 include_directories(${INCLUDE_DIR})
 
 # 添加 /src 文件夹下的文件
