@@ -32,14 +32,14 @@ namespace LRR
                         {
                             std::unique_lock<std::mutex> lock(m_mutex);
                             m_cv.wait(lock, [this]
-                                      { return m_working || m_end; });
-                            if (m_end)
+                                      { return m_busy.load(); });
+                            if (m_quit)
                                 break;
                             if (m_scheduled_task.delay > 0)
                             {
                                 m_cv.wait_for(lock, std::chrono::milliseconds(m_scheduled_task.delay));
                             }
-                            if (!m_working)
+                            if (!m_busy)
                                 continue;
                             if (m_scheduled_task.interval > 0)
                             {
@@ -48,10 +48,10 @@ namespace LRR
                                     auto _interval = std::chrono::milliseconds(m_scheduled_task.interval);
                                     auto now = std::chrono::steady_clock::now();
                                     auto next = now + _interval;
-                                    while (m_working)
+                                    while (m_busy)
                                     {
                                         m_scheduled_task.task();
-                                        if (!m_working)
+                                        if (!m_busy)
                                             break;
                                         m_cv.wait_until(lock, next);
                                         // wait_until has liitle delay
@@ -66,10 +66,10 @@ namespace LRR
                                 }
                                 else
                                 {
-                                    while (m_working)
+                                    while (m_busy)
                                     {
                                         m_scheduled_task.task();
-                                        if (!m_working)
+                                        if (!m_busy)
                                             break;
                                         m_cv.wait_for(lock, std::chrono::milliseconds(m_scheduled_task.interval));
                                     }
@@ -79,7 +79,7 @@ namespace LRR
                             {
                                 m_scheduled_task.task();
                             }
-                            m_working = false;
+                            m_busy = false;
                         }
                     });
 #if defined(__ANDROID__)
@@ -90,9 +90,9 @@ namespace LRR
             {
                 {
                     std::unique_lock<std::mutex> lock(m_mutex);
-                    m_working = false;
+                    m_busy = true;
                     m_do_on_stopped = false;
-                    m_end = true;
+                    m_quit = true;
                 }
                 m_cv.notify_all();
                 if (m_worker_thread.joinable())
@@ -106,7 +106,7 @@ namespace LRR
             /// @param precise_schedule 是否精确调度，如果为true，那么每次调度都会计算时间差，否则这个间隔是在上一次任务执行完毕后开始计算
             void Dispatch(std::function<void()> task, unsigned int delay, unsigned int interval = 0, bool precise_schedule = false)
             {
-                if (m_working || !task)
+                if (m_busy || !task)
                     return;
                 {
                     std::unique_lock<std::mutex> lock(m_mutex);
@@ -116,7 +116,7 @@ namespace LRR
                     m_scheduled_task.interval = interval;
                     m_scheduled_task.precise = precise_schedule;
 
-                    m_working = true;
+                    m_busy = true;
                 }
                 m_cv.notify_all();
             }
@@ -129,7 +129,7 @@ namespace LRR
                     std::unique_lock<std::mutex> lock(m_mutex, std::defer_lock);
                     if (m_worker_thread.get_id() != std::this_thread::get_id())
                         lock.lock();
-                    m_working = false;
+                    m_busy = false;
                     m_do_on_stopped = doOnceOnStopped;
                 }
                 m_cv.notify_all();
@@ -137,13 +137,13 @@ namespace LRR
 
             bool Busy() const noexcept
             {
-                return m_working;
+                return m_busy;
             }
 
         private:
             std::thread m_worker_thread;
-            std::atomic_bool m_working = false;
-            std::atomic_bool m_end = false;
+            std::atomic_bool m_busy = false;
+            std::atomic_bool m_quit = false;
             ScheduledTask m_scheduled_task;
             bool m_do_on_stopped = false;
             std::condition_variable m_cv;

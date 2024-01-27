@@ -5,7 +5,7 @@
 #include <math.h>
 #include <stdexcept>
 
-#include "utils/ScheduledWorker.h"
+#include "utils/Worker.h"
 
 rst::pos_buf_id rst::rasterizer::load_positions(const std::vector<Eigen::Vector3f> &positions)
 {
@@ -282,8 +282,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
     // 当fps超过一定值时，多线程反而会降低性能，因为每帧的时间都很短，线程同步带来的开销相对会变大
     constexpr unsigned int parts = 4;
     // 这里使用线程池，相对于裸std::thread会节省创建线程的开销
-    // 这个类是之前用来执行定时任务的忙等线程，只是也具备一次执行的功能，所以可以当作池来用
-    static std::vector<LRR::utils::ScheduledWorker> workers(parts); 
+    static std::vector<LRR::utils::Worker> workers(parts);
     static std::vector<std::pair<float, float>> y_segs(parts);
     auto y_step = (y_max - y_min) / parts;
     for (int i = 0; i < parts; i++)
@@ -329,8 +328,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
                             }
                         }
                     }
-                },
-                0);
+                });
         }
     }
     else
@@ -373,8 +371,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
                             }
                         }
                     }
-                },
-                0);
+                });
         }
     }
 
