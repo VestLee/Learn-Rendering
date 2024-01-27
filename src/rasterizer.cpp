@@ -275,9 +275,6 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
     float y_min = std::clamp(std::min(std::min(v[0][1], v[1][1]), v[2][1]), 0.f, (float)height - 1.f);
     float y_max = std::clamp(std::max(std::max(v[0][1], v[1][1]), v[2][1]), 0.f, (float)height - 1.f);
 
-    // anti-aliasing
-    constexpr bool MSAA4X = true;
-
     // multithreading
     // 当fps超过一定值时，多线程反而会降低性能，因为每帧的时间都很短，线程同步带来的开销相对会变大
     constexpr unsigned int parts = 4;
@@ -291,8 +288,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
         y_segs[i].second = y_min + y_step * (i + 1);
     }
 
-    // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
-    if constexpr (!MSAA4X)
+    if (sample_method == SampleMethod::None)
     {
         // without anti-aliasing
         for (int i = 0; i < parts; i++)
@@ -313,6 +309,8 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
                             // float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
                             // float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
                             // z_interpolated *= w_reciprocal;
+
+                            // the same operation but less division
                             float f1 = alpha * v[1].w() * v[2].w();
                             float f2 = beta * v[0].w() * v[2].w();
                             float f3 = gamma * v[0].w() * v[1].w();
@@ -338,36 +336,55 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
             workers[i].Dispatch(
                 [&, i]()
                 {
+                    // 保存需要着色的像素的索引
+                    auto shade_index = std::make_unique<int[]>(static_cast<int>(sample_method));
+                    // 简化倒数运算
+                    auto inv_sample_method = 1.f / (float)sample_method;
+
                     for (int x = (int)x_min; x <= (int)x_max; x++)
                     {
                         for (int y = (int)y_segs[i].first; y < (int)y_segs[i].second; y++)
                         {
-                            // you have to record the min-depth of the 4 sampled points(in one pixel)
-                            float min_depth = FLT_MAX;
-                            // the number of the 4 sampled points that are inside triangle
+                            auto frame_index = get_index(x, y);
+                            auto extend_index = frame_index * (int)sample_method;
+
                             int count = 0;
-                            static const std::vector<std::vector<float>> sampled_points = {{0.25f, 0.25f}, {0.75f, 0.25f}, {0.25f, 0.75f}, {0.75f, 0.75f}};
-                            for (int i = 0; i < 4; i++)
+
+                            for (int i = 0; i < (int)sample_method; i++)
                             {
-                                auto [alpha, beta, gamma] = computeBarycentric2D_2(float(x) + sampled_points[i][0], float(y) + sampled_points[i][1], t.v);
+                                auto [alpha, beta, gamma] = computeBarycentric2D_2(float(x) + sample_points[i][0], float(y) + sample_points[i][1], t.v);
                                 if (alpha < 0.f || beta < 0.f || gamma < 0.f)
                                     continue;
-                                // float w_reciprocal = float(1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w()));
-                                // float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-                                // z_interpolated *= w_reciprocal;
                                 float f1 = alpha * v[1].w() * v[2].w();
                                 float f2 = beta * v[0].w() * v[2].w();
                                 float f3 = gamma * v[0].w() * v[1].w();
                                 float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
-                                min_depth = std::min(min_depth, z_interpolated);
-                                count += 1;
+                                auto index = extend_index + i;
+                                if (depth_buf[index] > z_interpolated)
+                                {
+                                    depth_buf[index] = z_interpolated;
+                                    shade_index[count++] = index;
+                                }
                             }
-                            if (count > 0 && depth_buf[get_index(x, y)] > min_depth)
+
+                            if (count > 0)
                             {
-                                // update
-                                depth_buf[get_index(x, y)] = min_depth;
-                                // note: the color should be changed too
-                                set_pixel(Vector3f((float)x, (float)y, min_depth), t.getColor() * count / 4.0 + frame_buf[get_index(x, y)] * (4 - count) / 4.0); // frame_buf contains the current color
+                                // auto [alpha, beta, gamma] = computeBarycentric2D_2(float(x) + 0.5f, float(y) + 0.5f, t.v);
+                                // bool middle = alpha > 0.f && beta > 0.f && gamma > 0.f;
+                                // 当三角形在像素中心，就用中心着色，否则看情况选择某个采样点作为着色点
+                                // shade at middle or shade_index[0]
+                                // but now the shading is simple
+                                auto color = t.getColor();
+
+                                for (int i = 0; i < count; i++)
+                                {
+                                    Eigen::Vector3f old_color = color_buf[shade_index[i]];
+                                    color_buf[shade_index[i]] = color;
+                                    // 可以将frame_buf的更新放在所有三角形都遍历完之后，用color_buf进行一次统一的resolve
+                                    // 也可以像现在这样直接更新
+                                    // f = f - old / 4 + new / 4
+                                    frame_buf[frame_index] += (color - old_color) * inv_sample_method;
+                                }
                             }
                         }
                     }
@@ -403,6 +420,7 @@ void rst::rasterizer::clear(rst::Buffers buff)
     if ((buff & rst::Buffers::Color) == rst::Buffers::Color)
     {
         std::fill(frame_buf.begin(), frame_buf.end(), Eigen::Vector3f{0, 0, 0});
+        std::fill(color_buf.begin(), color_buf.end(), Eigen::Vector3f{0, 0, 0});
     }
     if ((buff & rst::Buffers::Depth) == rst::Buffers::Depth)
     {
@@ -424,9 +442,57 @@ inline int rst::rasterizer::get_index(int x, int y)
 inline void rst::rasterizer::set_pixel(const Eigen::Vector3f &point, const Eigen::Vector3f &color)
 {
     // old index: auto ind = point.y() + point.x() * width;
-    if (point.x() < 0 || point.x() >= width ||
-        point.y() < 0 || point.y() >= height)
-        return;
+    // if (point.x() < 0 || point.x() >= width ||
+    //    point.y() < 0 || point.y() >= height)
+    //    return;
     auto ind = (size_t)((height - point.y() - 1) * width + point.x());
     frame_buf[ind] = color;
+}
+
+void rst::rasterizer::set_sample_method(SampleMethod method)
+{
+    if (method == sample_method)
+        return;
+
+    sample_method = method;
+    auto w = width;
+    auto h = height;
+    switch (method)
+    {
+    case SampleMethod::None:
+        // 不开启抗锯齿时color_buf用frame_buf代替
+        color_buf.resize(0);
+        depth_buf.resize(w * h);
+        break;
+    case SampleMethod::MSAA_2X:
+        color_buf.resize(w * h * 2);
+        depth_buf.resize(w * h * 2);
+        sample_points =
+            {{0.25f, 0.25f}, {0.75f, 0.75f}};
+        break;
+    case SampleMethod::MSAA_4X:
+    {
+        color_buf.resize(w * h * 4);
+        depth_buf.resize(w * h * 4);
+        sample_points =
+            {{0.125f, 0.125f}, {0.375f, 0.375f}, {0.625f, 0.625f}, {0.875f, 0.875f}};
+        break;
+    }
+    case SampleMethod::MSAA_8X:
+        color_buf.resize(w * h * 8);
+        depth_buf.resize(w * h * 8);
+        sample_points =
+            {{0.0625f, 0.0625f}, {0.1875f, 0.1875f}, {0.3125f, 0.3125f}, {0.4375f, 0.4375f}, {0.5625f, 0.5625f}, {0.6875f, 0.6875f}, {0.8125f, 0.8125f}, {0.9375f, 0.9375f}};
+        break;
+    case SampleMethod::MSAA_16X:
+        color_buf.resize(w * h * 16);
+        depth_buf.resize(w * h * 16);
+        sample_points =
+            {{0.03125f, 0.03125f}, {0.09375f, 0.09375f}, {0.15625f, 0.15625f}, {0.21875f, 0.21875f}, {0.28125f, 0.28125f}, {0.34375f, 0.34375f}, {0.40625f, 0.40625f}, {0.46875f, 0.46875f}, {0.53125f, 0.53125f}, {0.59375f, 0.59375f}, {0.65625f, 0.65625f}, {0.71875f, 0.71875f}, {0.78125f, 0.78125f}, {0.84375f, 0.84375f}, {0.90625f, 0.90625f}, {0.96875f, 0.96875f}};
+        break;
+    }
+
+    // memory compact
+    color_buf.shrink_to_fit();
+    depth_buf.shrink_to_fit();
 }

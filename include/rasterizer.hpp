@@ -54,6 +54,15 @@ namespace rst
         int col_id = 0;
     };
 
+    enum class SampleMethod
+    {
+        None = 0,
+        MSAA_2X = 2,
+        MSAA_4X = 4,
+        MSAA_8X = 8,
+        MSAA_16X = 16,
+    };
+
     class rasterizer
     {
     public:
@@ -67,6 +76,7 @@ namespace rst
         void set_projection(const Eigen::Matrix4f &p);
 
         void set_pixel(const Eigen::Vector3f &point, const Eigen::Vector3f &color);
+        void set_sample_method(SampleMethod method);
 
         void clear(Buffers buff);
 
@@ -89,6 +99,7 @@ namespace rst
         std::map<int, std::vector<Eigen::Vector3f>> col_buf;
 
         std::vector<Eigen::Vector3f> frame_buf;
+        std::vector<Eigen::Vector3f> color_buf;
         std::vector<float> depth_buf;
         int get_index(int x, int y);
 
@@ -96,5 +107,8 @@ namespace rst
 
         int next_id = 0;
         int get_next_id() { return next_id++; }
+
+        SampleMethod sample_method = SampleMethod::None;
+        std::vector<std::vector<float>> sample_points;
     };
 } // namespace rst

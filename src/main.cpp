@@ -54,6 +54,8 @@ int main(int argc, const char **argv)
     auto ind_id = r.load_indices(ind);
     auto col_id = r.load_colors(cols);
 
+    r.set_sample_method(rst::SampleMethod::MSAA_4X);
+
     int key = 0;
     int frame_count = 0;
 
