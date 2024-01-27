@@ -287,6 +287,8 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
         y_segs[i].first = y_min + y_step * i;
         y_segs[i].second = y_min + y_step * (i + 1);
     }
+    // 每个部分是 [first, second), 最后一个部分要包含y_max
+    y_segs[parts - 1].second = y_max + 1.f;
 
     if (sample_method == SampleMethod::None)
     {
@@ -457,6 +459,10 @@ void rst::rasterizer::set_sample_method(SampleMethod method)
     sample_method = method;
     auto w = width;
     auto h = height;
+
+    // https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ne-d3d11-d3d11_standard_multisample_quality_levels
+    auto sample_base = 1.f / 16.f;
+
     switch (method)
     {
     case SampleMethod::None:
@@ -468,28 +474,35 @@ void rst::rasterizer::set_sample_method(SampleMethod method)
         color_buf.resize(w * h * 2);
         depth_buf.resize(w * h * 2);
         sample_points =
-            {{0.25f, 0.25f}, {0.75f, 0.75f}};
+            {{4, 4}, {-4, -4}};
         break;
     case SampleMethod::MSAA_4X:
     {
         color_buf.resize(w * h * 4);
         depth_buf.resize(w * h * 4);
         sample_points =
-            {{0.125f, 0.125f}, {0.375f, 0.375f}, {0.625f, 0.625f}, {0.875f, 0.875f}};
+            {{-2, -6}, {6, -2}, {-6, 2}, {2, 6}}; // 4x
         break;
     }
     case SampleMethod::MSAA_8X:
         color_buf.resize(w * h * 8);
         depth_buf.resize(w * h * 8);
         sample_points =
-            {{0.0625f, 0.0625f}, {0.1875f, 0.1875f}, {0.3125f, 0.3125f}, {0.4375f, 0.4375f}, {0.5625f, 0.5625f}, {0.6875f, 0.6875f}, {0.8125f, 0.8125f}, {0.9375f, 0.9375f}};
+            {{1, -3}, {-1, 3}, {5, 1}, {-3, -5}, {-5, 5}, {-7, -1}, {3, 7}, {7, -7}}; // 8x
         break;
     case SampleMethod::MSAA_16X:
         color_buf.resize(w * h * 16);
         depth_buf.resize(w * h * 16);
         sample_points =
-            {{0.03125f, 0.03125f}, {0.09375f, 0.09375f}, {0.15625f, 0.15625f}, {0.21875f, 0.21875f}, {0.28125f, 0.28125f}, {0.34375f, 0.34375f}, {0.40625f, 0.40625f}, {0.46875f, 0.46875f}, {0.53125f, 0.53125f}, {0.59375f, 0.59375f}, {0.65625f, 0.65625f}, {0.71875f, 0.71875f}, {0.78125f, 0.78125f}, {0.84375f, 0.84375f}, {0.90625f, 0.90625f}, {0.96875f, 0.96875f}};
+            {{1, 1}, {-1, -3}, {-3, 2}, {4, -1}, {-5, -2}, {2, 5}, {5, 3}, {3, -5}, {-2, 6}, {0, -7}, {-4, -6}, {-6, 4}, {-8, 0}, {7, -4}, {6, 7}, {-7, -8}}; // 16x
         break;
+    }
+
+    // map sample points to [0, 1]
+    for (auto &p : sample_points)
+    {
+        p[0] = p[0] * sample_base + 0.5f;
+        p[1] = p[1] * sample_base + 0.5f;
     }
 
     // memory compact
