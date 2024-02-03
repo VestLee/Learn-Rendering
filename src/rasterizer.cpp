@@ -171,8 +171,18 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
 
     // TODO ： 这里是在调节什么？没有理解
     // far = 50, near = 0.1
-    float f1 = (float)((50 - 0.1) / 2.0);
-    float f2 = (float)((50 + 0.1) / 2.0);
+    constexpr float f1 = (float)((50 - 0.1) / 2.0);
+    constexpr float f2 = (float)((50 + 0.1) / 2.0);
+
+    // taa jitter
+    if (sample_method == SampleMethod::TAA)
+    {
+        static auto roll_index = 0;
+        roll_index = (roll_index + 1) % sample_points.size();
+        auto &p = sample_points[roll_index];
+        projection(0, 2) = (p[0] - 0.5f) / width * 2.0f;
+        projection(1, 2) = (p[1] - 0.5f) / height * 2.0f;
+    }
 
     Eigen::Matrix4f mvp = projection * view * model;
     for (auto &i : ind)
@@ -211,6 +221,37 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
         t.setColor(2, col_z[0], col_z[1], col_z[2]);
 
         rasterize_triangle(t);
+    }
+
+    // resolve
+    if (sample_method == SampleMethod::TAA)
+    {
+        constexpr float alpha = 0.1f;
+        // TAA
+        for (int i = 0; i < width * height; i++)
+        {
+            auto history = color_buf[i];
+            auto color = frame_buf[i];
+            color = alpha * color + (1.f - alpha) * history;
+            frame_buf[i] = color;
+            color_buf[i] = color;
+        }
+    }
+    else if (sample_method >= SampleMethod::MSAA_2X)
+    {
+        // msaa
+        const int sub_sample_num = (int)sample_points.size();
+        const float inv_sub_sample_num = 1.f / sub_sample_num;
+        for (int i = 0; i < width * height; i++)
+        {
+            const int extend_index = i * sub_sample_num;
+            auto color = Eigen::Vector3f{0, 0, 0};
+            for (int j = 0; j < sub_sample_num; j++)
+            {
+                color += color_buf[extend_index + j];
+            }
+            frame_buf[i] = color * inv_sub_sample_num;
+        }
     }
 }
 
@@ -290,7 +331,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
     // 每个部分是 [first, second), 最后一个部分要包含y_max
     y_segs[parts - 1].second = y_max + 1.f;
 
-    if (sample_method == SampleMethod::None)
+    if (sample_method <= SampleMethod::TAA)
     {
         // without anti-aliasing
         for (int i = 0; i < parts; i++)
@@ -302,7 +343,7 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
                     {
                         for (int y = (int)y_segs[i].first; y < (int)y_segs[i].second; ++y)
                         {
-                            auto [alpha, beta, gamma] = computeBarycentric2D_2((float)x + 0.5f, (float)y + 0.5f, t.v);
+                            const auto [alpha, beta, gamma] = computeBarycentric2D_2((float)x + 0.5f, (float)y + 0.5f, t.v);
                             // we need to decide whether this point is actually inside the triangle
                             if (alpha < 0.f || beta < 0.f || gamma < 0.f)
                                 continue;
@@ -313,18 +354,19 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
                             // z_interpolated *= w_reciprocal;
 
                             // the same operation but less division
-                            float f1 = alpha * v[1].w() * v[2].w();
-                            float f2 = beta * v[0].w() * v[2].w();
-                            float f3 = gamma * v[0].w() * v[1].w();
-                            float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
+                            const float f1 = alpha * v[1].w() * v[2].w();
+                            const float f2 = beta * v[0].w() * v[2].w();
+                            const float f3 = gamma * v[0].w() * v[1].w();
+                            const float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
 
+                            const auto frame_index = get_index(x, y);
                             // compare the current depth with the value in depth buffer
-                            if (depth_buf[get_index(x, y)] > z_interpolated) // note: we use get_index to get the index of current point in depth buffer
+                            if (depth_buf[frame_index] > z_interpolated) // note: we use get_index to get the index of current point in depth buffer
                             {
                                 // we have to update this pixel
-                                depth_buf[get_index(x, y)] = z_interpolated; // update depth buffer
+                                depth_buf[frame_index] = z_interpolated; // update depth buffer
                                 // assign color to this pixel
-                                set_pixel(Vector3f((float)x, (float)y, z_interpolated), t.getColor());
+                                frame_buf[frame_index] = t.getColor();
                             }
                         }
                     }
@@ -338,30 +380,29 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
             workers[i].Dispatch(
                 [&, i]()
                 {
+                    const int sub_sample_num = (int)sample_points.size();
                     // 保存需要着色的像素的索引
-                    auto shade_index = std::make_unique<int[]>(static_cast<int>(sample_method));
-                    // 简化倒数运算
-                    auto inv_sample_method = 1.f / (float)sample_method;
+                    auto shade_index = std::make_unique<int[]>(sub_sample_num);
 
                     for (int x = (int)x_min; x <= (int)x_max; x++)
                     {
                         for (int y = (int)y_segs[i].first; y < (int)y_segs[i].second; y++)
                         {
-                            auto frame_index = get_index(x, y);
-                            auto extend_index = frame_index * (int)sample_method;
+                            const auto frame_index = get_index(x, y);
+                            const auto extend_index = frame_index * sub_sample_num;
 
                             int count = 0;
 
-                            for (int i = 0; i < (int)sample_method; i++)
+                            for (int i = 0; i < sub_sample_num; i++)
                             {
-                                auto [alpha, beta, gamma] = computeBarycentric2D_2(float(x) + sample_points[i][0], float(y) + sample_points[i][1], t.v);
+                                const auto [alpha, beta, gamma] = computeBarycentric2D_2(float(x) + sample_points[i][0], float(y) + sample_points[i][1], t.v);
                                 if (alpha < 0.f || beta < 0.f || gamma < 0.f)
                                     continue;
-                                float f1 = alpha * v[1].w() * v[2].w();
-                                float f2 = beta * v[0].w() * v[2].w();
-                                float f3 = gamma * v[0].w() * v[1].w();
-                                float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
-                                auto index = extend_index + i;
+                                const float f1 = alpha * v[1].w() * v[2].w();
+                                const float f2 = beta * v[0].w() * v[2].w();
+                                const float f3 = gamma * v[0].w() * v[1].w();
+                                const float z_interpolated = (f1 * v[0].z() + f2 * v[1].z() + f3 * v[2].z()) / (f1 + f2 + f3);
+                                const auto index = extend_index + i;
                                 if (depth_buf[index] > z_interpolated)
                                 {
                                     depth_buf[index] = z_interpolated;
@@ -376,16 +417,16 @@ void rst::rasterizer::rasterize_triangle(const Triangle &t)
                                 // 当三角形在像素中心，就用中心着色，否则看情况选择某个采样点作为着色点
                                 // shade at middle or shade_index[0]
                                 // but now the shading is simple
-                                auto color = t.getColor();
+                                const auto color = t.getColor();
 
                                 for (int i = 0; i < count; i++)
                                 {
-                                    Eigen::Vector3f old_color = color_buf[shade_index[i]];
-                                    color_buf[shade_index[i]] = color;
                                     // 可以将frame_buf的更新放在所有三角形都遍历完之后，用color_buf进行一次统一的resolve
                                     // 也可以像现在这样直接更新
                                     // f = f - old / 4 + new / 4
-                                    frame_buf[frame_index] += (color - old_color) * inv_sample_method;
+                                    // Eigen::Vector3f old_color = color_buf[shade_index[i]];
+                                    // frame_buf[frame_index] += (color - old_color) * inv_sub_sample_num;
+                                    color_buf[shade_index[i]] = color;
                                 }
                             }
                         }
@@ -421,8 +462,11 @@ void rst::rasterizer::clear(rst::Buffers buff)
 {
     if ((buff & rst::Buffers::Color) == rst::Buffers::Color)
     {
+        if (sample_method >= SampleMethod::MSAA_2X)
+        {
+            std::fill(color_buf.begin(), color_buf.end(), Eigen::Vector3f{0, 0, 0});
+        }
         std::fill(frame_buf.begin(), frame_buf.end(), Eigen::Vector3f{0, 0, 0});
-        std::fill(color_buf.begin(), color_buf.end(), Eigen::Vector3f{0, 0, 0});
     }
     if ((buff & rst::Buffers::Depth) == rst::Buffers::Depth)
     {
@@ -470,6 +514,13 @@ void rst::rasterizer::set_sample_method(SampleMethod method)
         color_buf.resize(0);
         depth_buf.resize(w * h);
         break;
+    case SampleMethod::TAA:
+        // TAA的color_buf作为历史帧的缓存
+        color_buf.resize(w * h);
+        depth_buf.resize(w * h);
+        sample_points =
+            {{1, 1}, {-1, -3}, {-3, 2}, {4, -1}, {-5, -2}, {2, 5}, {5, 3}, {3, -5}, {-2, 6}, {0, -7}, {-4, -6}, {-6, 4}, {-8, 0}, {7, -4}, {6, 7}, {-7, -8}}; // 16x
+        break;
     case SampleMethod::MSAA_2X:
         color_buf.resize(w * h * 2);
         depth_buf.resize(w * h * 2);
@@ -495,6 +546,9 @@ void rst::rasterizer::set_sample_method(SampleMethod method)
         depth_buf.resize(w * h * 16);
         sample_points =
             {{1, 1}, {-1, -3}, {-3, 2}, {4, -1}, {-5, -2}, {2, 5}, {5, 3}, {3, -5}, {-2, 6}, {0, -7}, {-4, -6}, {-6, 4}, {-8, 0}, {7, -4}, {6, 7}, {-7, -8}}; // 16x
+        break;
+    default:
+        throw std::runtime_error("unknown sample method");
         break;
     }
 

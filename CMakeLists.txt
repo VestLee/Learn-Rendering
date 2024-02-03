@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.14)
 project(rendering_demo)
 
 # set c++17
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 # ignore 4819，去除编码警告
 add_compile_options("/wd4819")

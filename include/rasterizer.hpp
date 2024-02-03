@@ -57,6 +57,7 @@ namespace rst
     enum class SampleMethod
     {
         None = 0,
+        TAA = 1, // TODO: 现在只有最基础的部分，缺少重投影、运动矢量、历史帧截断等消除伪影的方法
         MSAA_2X = 2,
         MSAA_4X = 4,
         MSAA_8X = 8,
